@@ -5,6 +5,7 @@ require 'yajl'
 require 'fluent/test'
 require 'fluent/plugin/out_snowplow'
 require 'fluent/plugin/snowplow/version'
+require 'snowplow-tracker'
 
 class SnowplowOutputTestBase < Test::Unit::TestCase
   def self.port
@@ -31,7 +32,6 @@ class SnowplowOutputTestBase < Test::Unit::TestCase
     Fluent::Test.setup
     @gets = []
     @posts = []
-    @prohibited = 0
     @requests = 0
     @dummy_server_thread = Thread.new do
       srv = WEBrick::HTTPServer.new(self.class.server_config)
@@ -70,7 +70,7 @@ class SnowplowOutputTestBase < Test::Unit::TestCase
 
           res.status = 200
         }
-        srv.mount_proc('/') { |req,res|
+        srv.mount_proc('/') { |_,res|
           res.status = 200
           res.body = 'running'
         }
@@ -132,184 +132,6 @@ class SnowplowOutputTestBase < Test::Unit::TestCase
     Fluent::Test::BufferedOutputTestDriver.new(Fluent::SnowplowOutput, tag).configure(conf)
   end
 end
-#
-# class HTTPOutputTest < HTTPOutputTestBase
-#   CONFIG = %[
-#     endpoint_url http://127.0.0.1:#{port}/api/
-#   ]
-#
-#   CONFIG_JSON = %[
-#     endpoint_url http://127.0.0.1:#{port}/api/
-#     serializer json
-#   ]
-#
-#   CONFIG_PUT = %[
-#     endpoint_url http://127.0.0.1:#{port}/api/
-#     http_method put
-#   ]
-#
-#   CONFIG_HTTP_ERROR = %[
-#     endpoint_url https://127.0.0.1:#{port - 1}/api/
-#   ]
-#
-#   CONFIG_HTTP_ERROR_SUPPRESSED = %[
-#     endpoint_url https://127.0.0.1:#{port - 1}/api/
-#     raise_on_error false
-#   ]
-#
-#   RATE_LIMIT_MSEC = 1200
-#
-#   CONFIG_RATE_LIMIT = %[
-#     endpoint_url http://127.0.0.1:#{port}/api/
-#     rate_limit_msec #{RATE_LIMIT_MSEC}
-#   ]
-#
-#   def test_configure
-#     d = create_driver CONFIG
-#     assert_equal "http://127.0.0.1:#{self.class.port}/api/", d.instance.endpoint_url
-#     assert_equal :form, d.instance.serializer
-#
-#     d = create_driver CONFIG_JSON
-#     assert_equal "http://127.0.0.1:#{self.class.port}/api/", d.instance.endpoint_url
-#     assert_equal :json, d.instance.serializer
-#   end
-#
-#   def test_emit_form
-#     d = create_driver CONFIG
-#     d.emit({ 'field1' => 50, 'field2' => 20, 'field3' => 10, 'otherfield' => 1, 'binary' => "\xe3\x81\x82".force_encoding("ascii-8bit") })
-#     d.run
-#
-#     assert_equal 1, @posts.size
-#     record = @posts[0]
-#
-#     assert_equal '50', record[:form]['field1']
-#     assert_equal '20', record[:form]['field2']
-#     assert_equal '10', record[:form]['field3']
-#     assert_equal '1', record[:form]['otherfield']
-#     assert_equal URI.encode_www_form_component("あ").upcase, record[:form]['binary'].upcase
-#     assert_nil record[:auth]
-#
-#     d.emit({ 'field1' => 50, 'field2' => 20, 'field3' => 10, 'otherfield' => 1 })
-#     d.run
-#
-#     assert_equal 2, @posts.size
-#   end
-#
-#   def test_emit_form_put
-#     d = create_driver CONFIG_PUT
-#     d.emit({ 'field1' => 50 })
-#     d.run
-#
-#     assert_equal 0, @posts.size
-#     assert_equal 1, @puts.size
-#     record = @puts[0]
-#
-#     assert_equal '50', record[:form]['field1']
-#     assert_nil record[:auth]
-#
-#     d.emit({ 'field1' => 50 })
-#     d.run
-#
-#     assert_equal 0, @posts.size
-#     assert_equal 2, @puts.size
-#   end
-#
-#   def test_emit_json
-#     binary_string = "\xe3\x81\x82"
-#     d = create_driver CONFIG_JSON
-#     d.emit({ 'field1' => 50, 'field2' => 20, 'field3' => 10, 'otherfield' => 1, 'binary' => binary_string })
-#     d.run
-#
-#     assert_equal 1, @posts.size
-#     record = @posts[0]
-#
-#     assert_equal 50, record[:json]['field1']
-#     assert_equal 20, record[:json]['field2']
-#     assert_equal 10, record[:json]['field3']
-#     assert_equal 1, record[:json]['otherfield']
-#     assert_equal binary_string, record[:json]['binary']
-#     assert_nil record[:auth]
-#   end
-#
-#   def test_http_error_is_raised
-#     d = create_driver CONFIG_HTTP_ERROR
-#     assert_raise Errno::ECONNREFUSED do
-#       d.emit({ 'field1' => 50 })
-#     end
-#   end
-#
-#   def test_http_error_is_suppressed_with_raise_on_error_false
-#     d = create_driver CONFIG_HTTP_ERROR_SUPPRESSED
-#     d.emit({ 'field1' => 50 })
-#     d.run
-#     # drive asserts the next output chain is called;
-#     # so no exception means our plugin handled the error
-#
-#     assert_equal 0, @requests
-#   end
-#
-#   def test_rate_limiting
-#     d = create_driver CONFIG_RATE_LIMIT
-#     record = { :k => 1 }
-#
-#     last_emit = _current_msec
-#     d.emit(record)
-#     d.run
-#
-#     assert_equal 1, @posts.size
-#
-#     d.emit({})
-#     d.run
-#     assert last_emit + RATE_LIMIT_MSEC > _current_msec, "Still under rate limiting interval"
-#     assert_equal 1, @posts.size
-#
-#     wait_msec = 500
-#     sleep (last_emit + RATE_LIMIT_MSEC - _current_msec + wait_msec) * 0.001
-#
-#     assert last_emit + RATE_LIMIT_MSEC < _current_msec, "No longer under rate limiting interval"
-#     d.emit(record)
-#     d.run
-#     assert_equal 2, @posts.size
-#   end
-#
-#   def _current_msec
-#     Time.now.to_f * 1000
-#   end
-#
-#   def test_auth
-#     @auth = true # enable authentication of dummy server
-#
-#     d = create_driver(CONFIG, 'test.metrics')
-#     d.emit({ 'field1' => 50, 'field2' => 20, 'field3' => 10, 'otherfield' => 1 })
-#     d.run # failed in background, and output warn log
-#
-#     assert_equal 0, @posts.size
-#     assert_equal 1, @prohibited
-#
-#     d = create_driver(CONFIG + %[
-#       authentication basic
-#       username alice
-#       password wrong_password
-#     ], 'test.metrics')
-#     d.emit({ 'field1' => 50, 'field2' => 20, 'field3' => 10, 'otherfield' => 1 })
-#     d.run # failed in background, and output warn log
-#
-#     assert_equal 0, @posts.size
-#     assert_equal 2, @prohibited
-#
-#     d = create_driver(CONFIG + %[
-#       authentication basic
-#       username alice
-#       password secret!
-#     ], 'test.metrics')
-#     d.emit({ 'field1' => 50, 'field2' => 20, 'field3' => 10, 'otherfield' => 1 })
-#     d.run # failed in background, and output warn log
-#
-#     assert_equal 1, @posts.size
-#     assert_equal 2, @prohibited
-#   end
-#
-# end
 
 class SnowplowOutputTest < SnowplowOutputTestBase
 
@@ -341,6 +163,15 @@ class SnowplowOutputTest < SnowplowOutputTestBase
     buffer_type   memory
   ]
 
+  SCHEMA = 'iglu:com.my_company/movie_poster/jsonschema/1-0-0'
+  TSTAMP = Date.new(2017, 11, 1).strftime("%q")
+  MESSAGE = {
+      'movie_name' => 'solaris',
+      'poster_country' => 'jp',
+      'poster_year$dt' => Date.new(1978, 1, 1).iso8601
+  }
+  PAYLOAD = SnowplowTracker::SelfDescribingJson.new(SCHEMA, MESSAGE).to_json
+
   def test_configure
     d = create_driver CONFIG_POST
     i = d.instance
@@ -352,20 +183,13 @@ class SnowplowOutputTest < SnowplowOutputTestBase
   end
 
   def test_emit_get
-    schema = 'iglu:com.my_company/movie_poster/jsonschema/1-0-0'
     aid = 'app1'
-    true_tstamp = Date.new(2017, 11, 1).strftime("%Q")
 
     d = create_driver CONFIG_GET
-    message = {
-        'movie_name' => 'Solaris',
-        'poster_country' => 'JP',
-        'poster_year$dt' => Date.new(1978, 1, 1).iso8601
-    }
     d.emit({'application' => aid,
-            'schema' => schema,
-            'true_timestamp' => true_tstamp,
-            'message' => Yajl::Encoder.encode(message)})
+            'schema' => SCHEMA,
+            'true_timestamp' => TSTAMP,
+            'message' => Yajl::Encoder.encode(MESSAGE)})
     d.run
 
     assert_equal 1, @gets.size
@@ -373,28 +197,22 @@ class SnowplowOutputTest < SnowplowOutputTestBase
 
     assert_equal 'ue', event['e']
     assert_equal aid, event['aid']
-    assert_equal true_tstamp, event['ttm']
+    assert_equal TSTAMP, event['ttm']
+    assert_nil event['tna']
 
-    payload = Yajl::Parser.parse( Base64.strict_decode64(event['ue_px']))['data']
-    assert_equal schema, payload['schema']
-    assert_equal message, payload['data']
+    parsed = Yajl::Parser.parse( Base64.strict_decode64(event['ue_px']))['data']
+    assert_equal SCHEMA, parsed['schema']
+    assert_equal MESSAGE, parsed['data']
   end
 
   def test_emit_post
-    schema = 'iglu:com.my_company/movie_poster/jsonschema/1-0-0'
     aid = 'app1'
-    true_tstamp = Date.new(2017, 11, 1).strftime("%Q")
 
     d = create_driver CONFIG_POST
-    message = {
-        'movie_name' => 'Solaris',
-        'poster_country' => 'JP',
-        'poster_year$dt' => Date.new(1978, 1, 1).iso8601
-    }
     d.emit({'application' => aid,
-            'schema' => schema,
-            'true_timestamp' => true_tstamp,
-            'message' => Yajl::Encoder.encode(message)})
+            'schema' => SCHEMA,
+            'true_timestamp' => TSTAMP,
+            'message' => Yajl::Encoder.encode(MESSAGE)})
     d.run
 
     assert_equal 1, @posts.size
@@ -405,11 +223,146 @@ class SnowplowOutputTest < SnowplowOutputTestBase
     event = record[:json]['data'][0]
     assert_equal 'ue', event['e']
     assert_equal aid, event['aid']
-    assert_equal true_tstamp, event['ttm']
+    assert_equal TSTAMP, event['ttm']
+    assert_nil event['tna']
 
-    payload = Yajl::Parser.parse( Base64.strict_decode64(event['ue_px']))['data']
-    assert_equal schema, payload['schema']
-    assert_equal message, payload['data']
+    parsed = Yajl::Parser.parse( Base64.strict_decode64(event['ue_px']))['data']
+    assert_equal SCHEMA, parsed['schema']
+    assert_equal MESSAGE, parsed['data']
+  end
+
+  def test_accept_sdjon_input
+    d = create_driver %[
+                              # Snowplow Emitter Config
+                              host          127.0.0.1
+                              port          #{self.class.port}
+                              method        post
+                              is_sdjson     true
+                              app_id_key    app_id
+                              tstamp_key    timestamp
+                              encode_base64 false
+
+                              # Buffered Output Config
+                              buffer_type   memory
+                            ]
+
+    aid = 'app2'
+    d.emit({'app_id' => aid,
+            'message' => Yajl::Encoder.encode(PAYLOAD),
+            'timestamp' => TSTAMP
+           })
+
+    d.run
+
+    assert_equal 1, @posts.size
+    record = @posts[0]
+
+    assert_equal 'iglu:com.snowplowanalytics.snowplow/payload_data/jsonschema/1-0-4', record[:json]['schema']
+
+    event = record[:json]['data'][0]
+    assert_equal 'ue', event['e']
+    assert_equal aid, event['aid']
+    assert_equal TSTAMP, event['ttm']
+
+    assert_nil event['ue_px']
+
+    parsed = Yajl::Parser.parse( event['ue_pr'])['data']
+    assert_equal SCHEMA, parsed['schema']
+    assert_equal MESSAGE, parsed['data']
+  end
+
+  def test_accept_context_inputs
+    d = create_driver %[
+                              # Snowplow Emitter Config
+                              host          127.0.0.1
+                              port          #{self.class.port}
+                              method        post
+                              is_sdjson     false
+                              app_id_key    app_id
+                              tstamp_key    timestamp
+                              context_key   contexts
+
+                              # Buffered Output Config
+                              buffer_type   memory
+                            ]
+
+    aid = 'app2'
+    d.emit({'app_id' => aid,
+            'message' => Yajl::Encoder.encode(PAYLOAD),
+            'contexts' => Yajl::Encoder.encode([PAYLOAD, PAYLOAD]),
+            'timestamp' => TSTAMP
+           })
+
+    d.run
+
+    assert_equal 1, @posts.size
+    record = @posts[0]
+
+    event = record[:json]['data'][0]
+
+    assert_equal 2, Yajl::Parser.parse( Base64.strict_decode64(event['cx']))['data'].length
+
+  end
+
+  def test_accept_optional_nil_contexts
+
+    d = create_driver %[
+                              # Snowplow Emitter Config
+                              host          127.0.0.1
+                              port          #{self.class.port}
+                              method        post
+                              is_sdjson     false
+                              app_id_key    app_id
+                              tstamp_key    timestamp
+                              context_key   contexts
+
+                              # Buffered Output Config
+                              buffer_type   memory
+                            ]
+
+    d.emit({'app_id' => 'app2',
+            'message' => Yajl::Encoder.encode(PAYLOAD),
+            'timestamp' => TSTAMP
+           })
+
+    d.run
+
+    assert_equal 1, @posts.size
+    record = @posts[0]
+
+    event = record[:json]['data'][0]
+
+    assert_nil event['cx']
+  end
+
+  def test_support_namespace
+    d = create_driver %[
+                              # Snowplow Emitter Config
+                              host          127.0.0.1
+                              port          #{self.class.port}
+                              app_id_key    app_id
+                              tstamp_key    timestamp
+                              namespace_key namespace
+
+                              # Buffered Output Config
+                              buffer_type   memory
+                            ]
+
+    namespace = 'my_name'
+
+    d.emit({'app_id' => 'app2',
+            'message' => Yajl::Encoder.encode(PAYLOAD),
+            'namespace' => namespace,
+            'timestamp' => TSTAMP
+           })
+
+    d.run
+
+    assert_equal 1, @gets.size
+
+    event = @gets[0][:query]
+
+    assert_equal namespace, event['tna']
   end
 
 end

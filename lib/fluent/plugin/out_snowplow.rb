@@ -39,8 +39,8 @@ class Fluent::SnowplowOutput < Fluent::TimeSlicedOutput
   desc 'The name of the field containing the Application ID'
   config_param :app_id_key, :string, default: 'application'
 
-  desc 'The tracker namespace.'
-  config_param :namespace, :string, default: nil
+  desc 'The name of the field containing the tracker namespace. Defaults to nil.'
+  config_param :namespace_key, :string, default: nil
 
   desc 'Whether the payload should be base64 encoded. Defaults to true.'
   config_param :encode_base64, :bool, default: true
@@ -59,7 +59,7 @@ class Fluent::SnowplowOutput < Fluent::TimeSlicedOutput
       port: @port,
       method: @method,
       on_success: ->(_) { log.debug("Flush with success on snowplow") },
-      on_failure: ->(_, _) { raise "Error when flushing to snowplow" }
+      on_failure: ->(_, _) { log.error("Error when flushing to snowplow") }
     }.delete_if { |_,v| v.nil? })
 
     @trackers = Hash.new { |hash, key| hash[key] = {} }
@@ -89,7 +89,7 @@ class Fluent::SnowplowOutput < Fluent::TimeSlicedOutput
 
       # collect the self-describing json (assume already in proper format is :is_sdjson is set)
       self_describing_json = lambda { |x|
-        if @is_sdjson then
+        if @is_sdjson
           SnowplowTracker::SelfDescribingJson.new(x['schema'], x['data'])
         else
           SnowplowTracker::SelfDescribingJson.new(record[@schema_key], x)
@@ -97,10 +97,10 @@ class Fluent::SnowplowOutput < Fluent::TimeSlicedOutput
       }.call(JSON.parse(record[@message_key]))
 
       # Collect any contexts
-      context = if @context_key.nil? then
+      context = if @context_key.nil? or record[@context_key].nil?
                   nil
                 else
-                  JSON.parse(record[@context_key]).map { |x| SelfDescribingJson.new(x['schema'], x['data']) }
+                  JSON.parse(record[@context_key]).map { |x| SnowplowTracker::SelfDescribingJson.new(x['schema'], x['data']) }
                 end
 
       tracker.track_self_describing_event(
